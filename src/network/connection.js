@@ -1,3 +1,4 @@
+const createRetry = require('../retry')
 const createSocket = require('./socket')
 const createRequest = require('../protocol/request')
 const Decoder = require('../protocol/decoder')
@@ -59,6 +60,7 @@ module.exports = class Connection {
     this.sasl = sasl
 
     this.retry = retry
+    this.retrier = createRetry({ ...this.retry })
     this.requestTimeout = requestTimeout
     this.connectionTimeout = connectionTimeout
 

@@ -1,4 +1,5 @@
 const Long = require('long')
+const createRetry = require('../retry')
 const { initialRetryTime } = require('../retry/defaults')
 const ConsumerGroup = require('./consumerGroup')
 const Runner = require('./runner')
@@ -236,7 +237,6 @@ module.exports = ({
     }
 
     const onCrash = async e => {
-      copnsole.log('crash hereeeeee')
       logger.error(`Crash: ${e.name}: ${e.message}`, {
         groupId,
         retryCount: e.retryCount,
@@ -261,14 +261,8 @@ module.exports = ({
         setTimeout(() => restart(onCrash), retryTime)
       }
     }
-    try {
-      console.log(' it is starting.....')
-      await start(onCrash)
-      console.log('it started')
-    } catch (e) {
-      console.log('well it did get errorrrrrr', e)
-      throw e
-    }
+
+    await start(onCrash)
   }
 
   /**
@@ -408,8 +402,11 @@ module.exports = ({
    */
   const describeGroup = async () => {
     const coordinator = await cluster.findGroupCoordinator({ groupId })
-    const { groups } = await coordinator.describeGroups({ groupIds: [groupId] })
-    return groups.find(group => group.groupId === groupId)
+    const retrier = createRetry(retry)
+    return retrier(async () => {
+      const { groups } = await coordinator.describeGroups({ groupIds: [groupId] })
+      return groups.find(group => group.groupId === groupId)
+    })
   }
 
   /**

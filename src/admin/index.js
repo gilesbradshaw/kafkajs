@@ -1,3 +1,4 @@
+const createRetry = require('../retry')
 const waitFor = require('../utils/waitFor')
 const createConsumer = require('../consumer')
 const InstrumentationEventEmitter = require('../instrumentation/emitter')
@@ -89,30 +90,37 @@ module.exports = ({
         'Invalid topics array, it cannot have multiple entries for the same topic'
       )
     }
-    try {
-      await cluster.refreshMetadata()
-      const broker = await cluster.findControllerBroker()
-      await broker.createTopics({ topics, validateOnly, timeout })
 
-      if (waitForLeaders) {
-        const topicNamesArray = Array.from(topicNames.values())
-        await retryOnLeaderNotAvailable(async () => await broker.metadata(topicNamesArray), {
-          delay: 100,
-          timeoutMessage: 'Timed out while waiting for topic leaders',
-        })
-      }
+    const retrier = createRetry(retry)
 
-      return true
-    } catch (e) {
-      if (e.type === 'NOT_CONTROLLER') {
-        logger.warn('Could not create topics', { error: e.message, retryCount, retryTime })
-      }
+    return retrier(async (bail, retryCount, retryTime) => {
+      try {
+        await cluster.refreshMetadata()
+        const broker = await cluster.findControllerBroker()
+        await broker.createTopics({ topics, validateOnly, timeout })
 
-      if (e.type === 'TOPIC_ALREADY_EXISTS') {
-        return false
+        if (waitForLeaders) {
+          const topicNamesArray = Array.from(topicNames.values())
+          await retryOnLeaderNotAvailable(async () => await broker.metadata(topicNamesArray), {
+            delay: 100,
+            timeoutMessage: 'Timed out while waiting for topic leaders',
+          })
+        }
+
+        return true
+      } catch (e) {
+        if (e.type === 'NOT_CONTROLLER') {
+          logger.warn('Could not create topics', { error: e.message, retryCount, retryTime })
+          throw e
+        }
+
+        if (e.type === 'TOPIC_ALREADY_EXISTS') {
+          return false
+        }
+
+        bail(e)
       }
-      throw e
-    }
+    })
   }
 
   /**
@@ -128,16 +136,41 @@ module.exports = ({
     if (topics.filter(topic => typeof topic !== 'string').length > 0) {
       throw new KafkaJSNonRetriableError('Invalid topics array, the names must be a valid string')
     }
-    await cluster.refreshMetadata()
-    const broker = await cluster.findControllerBroker()
-    await broker.deleteTopics({ topics, timeout })
 
-    // Remove deleted topics
-    for (const topic of topics) {
-      cluster.targetTopics.delete(topic)
-    }
+    const retrier = createRetry(retry)
 
-    await cluster.refreshMetadata()
+    return retrier(async (bail, retryCount, retryTime) => {
+      try {
+        await cluster.refreshMetadata()
+        const broker = await cluster.findControllerBroker()
+        await broker.deleteTopics({ topics, timeout })
+
+        // Remove deleted topics
+        for (const topic of topics) {
+          cluster.targetTopics.delete(topic)
+        }
+
+        await cluster.refreshMetadata()
+      } catch (e) {
+        if (['NOT_CONTROLLER', 'UNKNOWN_TOPIC_OR_PARTITION'].includes(e.type)) {
+          logger.warn('Could not delete topics', { error: e.message, retryCount, retryTime })
+          throw e
+        }
+
+        if (e.type === 'REQUEST_TIMED_OUT') {
+          logger.error(
+            'Could not delete topics, check if "delete.topic.enable" is set to "true" (the default value is "false") or increase the timeout',
+            {
+              error: e.message,
+              retryCount,
+              retryTime,
+            }
+          )
+        }
+
+        bail(e)
+      }
+    })
   }
 
   /**
@@ -149,34 +182,48 @@ module.exports = ({
       throw new KafkaJSNonRetriableError(`Invalid topic ${topic}`)
     }
 
-    await cluster.addTargetTopic(topic)
-    await cluster.refreshMetadataIfNecessary()
+    const retrier = createRetry(retry)
 
-    const metadata = cluster.findTopicPartitionMetadata(topic)
-    const high = await cluster.fetchTopicsOffset([
-      {
-        topic,
-        fromBeginning: false,
-        partitions: metadata.map(p => ({ partition: p.partitionId })),
-      },
-    ])
+    return retrier(async (bail, retryCount, retryTime) => {
+      try {
+        await cluster.addTargetTopic(topic)
+        await cluster.refreshMetadataIfNecessary()
 
-    const low = await cluster.fetchTopicsOffset([
-      {
-        topic,
-        fromBeginning: true,
-        partitions: metadata.map(p => ({ partition: p.partitionId })),
-      },
-    ])
+        const metadata = cluster.findTopicPartitionMetadata(topic)
+        const high = await cluster.fetchTopicsOffset([
+          {
+            topic,
+            fromBeginning: false,
+            partitions: metadata.map(p => ({ partition: p.partitionId })),
+          },
+        ])
 
-    const { partitions: highPartitions } = high.pop()
-    const { partitions: lowPartitions } = low.pop()
-    return highPartitions.map(({ partition, offset }) => ({
-      partition,
-      offset,
-      high: offset,
-      low: lowPartitions.find(({ partition: lowPartition }) => lowPartition === partition).offset,
-    }))
+        const low = await cluster.fetchTopicsOffset([
+          {
+            topic,
+            fromBeginning: true,
+            partitions: metadata.map(p => ({ partition: p.partitionId })),
+          },
+        ])
+
+        const { partitions: highPartitions } = high.pop()
+        const { partitions: lowPartitions } = low.pop()
+        return highPartitions.map(({ partition, offset }) => ({
+          partition,
+          offset,
+          high: offset,
+          low: lowPartitions.find(({ partition: lowPartition }) => lowPartition === partition)
+            .offset,
+        }))
+      } catch (e) {
+        if (e.type === 'UNKNOWN_TOPIC_OR_PARTITION') {
+          await cluster.refreshMetadata()
+          throw e
+        }
+
+        bail(e)
+      }
+    })
   }
 
   /**
@@ -347,10 +394,23 @@ module.exports = ({
       )
     }
 
-    await cluster.refreshMetadata()
-    const broker = await cluster.findControllerBroker()
-    const response = await broker.describeConfigs({ resources, includeSynonyms })
-    return response
+    const retrier = createRetry(retry)
+
+    return retrier(async (bail, retryCount, retryTime) => {
+      try {
+        await cluster.refreshMetadata()
+        const broker = await cluster.findControllerBroker()
+        const response = await broker.describeConfigs({ resources, includeSynonyms })
+        return response
+      } catch (e) {
+        if (e.type === 'NOT_CONTROLLER') {
+          logger.warn('Could not describe configs', { error: e.message, retryCount, retryTime })
+          throw e
+        }
+
+        bail(e)
+      }
+    })
   }
 
   /**
@@ -411,10 +471,24 @@ module.exports = ({
         `Invalid resource config value: ${JSON.stringify(invalidConfigValue)}`
       )
     }
-    await cluster.refreshMetadata()
-    const broker = await cluster.findControllerBroker()
-    const response = await broker.alterConfigs({ resources, validateOnly: !!validateOnly })
-    return response
+
+    const retrier = createRetry(retry)
+
+    return retrier(async (bail, retryCount, retryTime) => {
+      try {
+        await cluster.refreshMetadata()
+        const broker = await cluster.findControllerBroker()
+        const response = await broker.alterConfigs({ resources, validateOnly: !!validateOnly })
+        return response
+      } catch (e) {
+        if (e.type === 'NOT_CONTROLLER') {
+          logger.warn('Could not alter configs', { error: e.message, retryCount, retryTime })
+          throw e
+        }
+
+        bail(e)
+      }
+    })
   }
 
   /**
