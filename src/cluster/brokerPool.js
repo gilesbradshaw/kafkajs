@@ -1,5 +1,4 @@
 const Broker = require('../broker')
-const createRetry = require('../retry')
 const shuffle = require('../utils/shuffle')
 const arrayDiff = require('../utils/arrayDiff')
 const { KafkaJSBrokerNotFound } = require('../errors')
@@ -31,7 +30,6 @@ module.exports = class BrokerPool {
     this.connectionBuilder = connectionBuilder
     this.metadataMaxAge = metadataMaxAge || 0
     this.logger = logger.namespace('BrokerPool')
-    this.retrier = createRetry(assign({}, retry))
 
     this.createBroker = options =>
       new Broker({
@@ -70,30 +68,8 @@ module.exports = class BrokerPool {
     if (this.hasConnectedBrokers()) {
       return
     }
-
-    return this.retrier(async (bail, retryCount, retryTime) => {
-      try {
-        await this.seedBroker.connect()
-        this.versions = this.seedBroker.versions
-      } catch (e) {
-        if (e.name === 'KafkaJSConnectionError' || e.type === 'ILLEGAL_SASL_STATE') {
-          // Connection builder will always rotate the seed broker
-          this.seedBroker = this.createBroker({
-            connection: this.connectionBuilder.build(),
-            logger: this.rootLogger,
-          })
-          this.logger.error(
-            `Failed to connect to seed broker, trying another broker from the list: ${e.message}`,
-            { retryCount, retryTime }
-          )
-        } else {
-          this.logger.error(e.message, { retryCount, retryTime })
-        }
-
-        if (e.retriable) throw e
-        bail(e)
-      }
-    })
+    await this.seedBroker.connect()
+    this.versions = this.seedBroker.versions
   }
 
   /**
@@ -119,61 +95,51 @@ module.exports = class BrokerPool {
     const broker = await this.findConnectedBroker()
     const { host: seedHost, port: seedPort } = this.seedBroker.connection
 
-    return this.retrier(async (bail, retryCount, retryTime) => {
-      try {
-        this.metadata = await broker.metadata(topics)
-        this.metadataExpireAt = Date.now() + this.metadataMaxAge
+    this.metadata = await broker.metadata(topics)
+    this.metadataExpireAt = Date.now() + this.metadataMaxAge
 
-        const replacedBrokers = []
-        this.brokers = this.metadata.brokers.reduce((result, { nodeId, host, port, rack }) => {
-          if (result[nodeId]) {
-            if (!hasBrokerBeenReplaced(result[nodeId], { host, port, rack })) {
-              return result
-            }
-
-            replacedBrokers.push(result[nodeId])
-          }
-
-          if (host === seedHost && port === seedPort) {
-            this.seedBroker.nodeId = nodeId
-            this.seedBroker.connection.rack = rack
-            return assign(result, {
-              [nodeId]: this.seedBroker,
-            })
-          }
-
-          return assign(result, {
-            [nodeId]: this.createBroker({
-              logger: this.rootLogger,
-              versions: this.versions,
-              supportAuthenticationProtocol: this.supportAuthenticationProtocol,
-              connection: this.connectionBuilder.build({ host, port, rack }),
-              nodeId,
-            }),
-          })
-        }, this.brokers)
-
-        const freshBrokerIds = this.metadata.brokers.map(({ nodeId }) => `${nodeId}`).sort()
-        const currentBrokerIds = keys(this.brokers).sort()
-        const unusedBrokerIds = arrayDiff(currentBrokerIds, freshBrokerIds)
-
-        const brokerDisconnects = unusedBrokerIds.map(nodeId => {
-          const broker = this.brokers[nodeId]
-          return broker.disconnect().then(() => {
-            delete this.brokers[nodeId]
-          })
-        })
-
-        const replacedBrokersDisconnects = replacedBrokers.map(broker => broker.disconnect())
-        await Promise.all([...brokerDisconnects, ...replacedBrokersDisconnects])
-      } catch (e) {
-        if (e.type === 'LEADER_NOT_AVAILABLE') {
-          throw e
+    const replacedBrokers = []
+    this.brokers = this.metadata.brokers.reduce((result, { nodeId, host, port, rack }) => {
+      if (result[nodeId]) {
+        if (!hasBrokerBeenReplaced(result[nodeId], { host, port, rack })) {
+          return result
         }
 
-        bail(e)
+        replacedBrokers.push(result[nodeId])
       }
+
+      if (host === seedHost && port === seedPort) {
+        this.seedBroker.nodeId = nodeId
+        this.seedBroker.connection.rack = rack
+        return assign(result, {
+          [nodeId]: this.seedBroker,
+        })
+      }
+
+      return assign(result, {
+        [nodeId]: this.createBroker({
+          logger: this.rootLogger,
+          versions: this.versions,
+          supportAuthenticationProtocol: this.supportAuthenticationProtocol,
+          connection: this.connectionBuilder.build({ host, port, rack }),
+          nodeId,
+        }),
+      })
+    }, this.brokers)
+
+    const freshBrokerIds = this.metadata.brokers.map(({ nodeId }) => `${nodeId}`).sort()
+    const currentBrokerIds = keys(this.brokers).sort()
+    const unusedBrokerIds = arrayDiff(currentBrokerIds, freshBrokerIds)
+
+    const brokerDisconnects = unusedBrokerIds.map(nodeId => {
+      const broker = this.brokers[nodeId]
+      return broker.disconnect().then(() => {
+        delete this.brokers[nodeId]
+      })
     })
+
+    const replacedBrokersDisconnects = replacedBrokers.map(broker => broker.disconnect())
+    await Promise.all([...brokerDisconnects, ...replacedBrokersDisconnects])
   }
 
   /**
@@ -262,34 +228,6 @@ module.exports = class BrokerPool {
     if (broker.isConnected()) {
       return
     }
-
-    return this.retrier(async (bail, retryCount, retryTime) => {
-      try {
-        await broker.connect()
-      } catch (e) {
-        if (e.name === 'KafkaJSConnectionError' || e.type === 'ILLEGAL_SASL_STATE') {
-          await broker.disconnect()
-
-          // Connection refused means this node is down, or the cluster is restarting,
-          // which requires metadata refresh to discover the new nodes
-          if (e.code === 'ECONNREFUSED') {
-            return bail(e)
-          }
-
-          // Rebuild the connection since it can't recover from illegal SASL state
-          broker.connection = this.connectionBuilder.build({
-            host: broker.connection.host,
-            port: broker.connection.port,
-            rack: broker.connection.rack,
-          })
-
-          this.logger.error(`Failed to connect to broker, reconnecting`, { retryCount, retryTime })
-        }
-
-        if (e.retriable) throw e
-        this.logger.error(e, { retryCount, retryTime, stack: e.stack })
-        bail(e)
-      }
-    })
+    await broker.connect()
   }
 }
