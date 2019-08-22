@@ -77,7 +77,7 @@ module.exports = class Runner {
     return this.join().catch(this.onCrash)
   }
 
-  async start() {
+  async start(onStart) {
     if (this.running) {
       return
     }
@@ -85,7 +85,9 @@ module.exports = class Runner {
     try {
       await this.consumerGroup.connect()
       await this.join()
-
+      if (onStart) {
+        onStart()
+      }
       this.running = true
       while (true) {
         await this.scheduleFetch()

@@ -194,6 +194,7 @@ module.exports = ({
    * @return {Promise}
    */
   const run = async ({
+    onStart,
     autoCommit = true,
     autoCommitInterval = null,
     autoCommitThreshold = null,
@@ -223,7 +224,7 @@ module.exports = ({
         partitionsConsumedConcurrently,
       })
 
-      await runner.start()
+      await runner.start(onStart)
     }
 
     const restart = onCrash => {

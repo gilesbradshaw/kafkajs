@@ -624,6 +624,7 @@ export type Consumer = {
     partitionsConsumedConcurrently?: number
     eachBatch?: (payload: EachBatchPayload) => Promise<void>
     eachMessage?: (payload: EachMessagePayload) => Promise<void>
+    onStart?: () => void
   }): Promise<void>
   commitOffsets(topicPartitions: Array<TopicPartitionOffsetAndMedata>): Promise<void>
   seek(topicPartition: { topic: string; partition: number; offset: string }): void
