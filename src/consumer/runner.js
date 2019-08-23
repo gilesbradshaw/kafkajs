@@ -148,7 +148,7 @@ module.exports = class Runner {
       try {
         await this.eachMessage({ topic, partition, message })
       } catch (e) {
-        console.log('ERRORRRRR')
+        console.log('ERRORRRRR', e)
         if (!isKafkaJSError(e)) {
           this.logger.error(`Error when calling eachMessage`, {
             topic,
@@ -156,6 +156,7 @@ module.exports = class Runner {
             offset: message.offset,
             stack: e.stack,
           })
+          throw e
         }
 
         // In case of errors, commit the previously consumed offsets
