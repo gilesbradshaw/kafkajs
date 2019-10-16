@@ -106,7 +106,6 @@ module.exports = ({
    * @returns {Promise}
    */
   const connect = async () => {
-    console.log('this is it')
     try {
       await cluster.connect()
     } catch (ex) {
