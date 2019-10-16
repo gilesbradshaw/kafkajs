@@ -39,7 +39,6 @@ module.exports = ({
   }
 
   const partitioner = createPartitioner()
-  const retrier = createRetry(Object.assign({}, cluster.retry, retry))
   const instrumentationEmitter = rootInstrumentationEmitter || new InstrumentationEventEmitter()
   const idempotentEosManager = createEosManager({
     logger,
@@ -55,7 +54,6 @@ module.exports = ({
     partitioner,
     eosManager: idempotentEosManager,
     idempotent,
-    retrier,
   })
 
   let transactionalEosManager
@@ -130,7 +128,6 @@ module.exports = ({
       logger,
       cluster,
       partitioner,
-      retrier,
       eosManager: transactionalEosManager,
       idempotent: true,
     })

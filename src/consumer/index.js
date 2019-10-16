@@ -1,5 +1,4 @@
 const Long = require('long')
-const createRetry = require('../retry')
 const { initialRetryTime } = require('../retry/defaults')
 const ConsumerGroup = require('./consumerGroup')
 const Runner = require('./runner')
@@ -107,7 +106,13 @@ module.exports = ({
    * @returns {Promise}
    */
   const connect = async () => {
-    await cluster.connect()
+    console.log('this is it')
+    try {
+      await cluster.connect()
+    } catch (ex) {
+      console.log(ex)
+      throw ex
+    }
     instrumentationEmitter.emit(CONNECT)
   }
 
@@ -403,11 +408,8 @@ module.exports = ({
    */
   const describeGroup = async () => {
     const coordinator = await cluster.findGroupCoordinator({ groupId })
-    const retrier = createRetry(retry)
-    return retrier(async () => {
-      const { groups } = await coordinator.describeGroups({ groupIds: [groupId] })
-      return groups.find(group => group.groupId === groupId)
-    })
+    const { groups } = await coordinator.describeGroups({ groupIds: [groupId] })
+    return groups.find(group => group.groupId === groupId)
   }
 
   /**

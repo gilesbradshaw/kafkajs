@@ -1,4 +1,6 @@
-(fork that fails fast..)
+This fork **fails fast**
+
+It never retries just fails.
 
 # <a href='https://kafka.js.org'><img src='https://raw.githubusercontent.com/tulios/kafkajs/master/logoV2.png' height='60' alt='KafkaJS' aria-label='kafka.js.org' /></a>
 

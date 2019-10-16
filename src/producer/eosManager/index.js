@@ -1,4 +1,3 @@
-const createRetry = require('../../retry')
 const { KafkaJSNonRetriableError } = require('../../errors')
 const COORDINATOR_TYPES = require('../../protocol/coordinatorTypes')
 const createStateMachine = require('./transactionStateMachine')
@@ -38,8 +37,6 @@ module.exports = ({
   if (transactional && !transactionalId) {
     throw new KafkaJSNonRetriableError('Cannot manage transactions without a transactionalId')
   }
-
-  const retrier = createRetry(cluster.retry)
 
   /**
    * Current producer ID
@@ -110,44 +107,24 @@ module.exports = ({
        * Overwrites any existing state in this transaction manager
        */
       async initProducerId() {
-        return retrier(async (bail, retryCount, retryTime) => {
-          try {
-            await cluster.refreshMetadataIfNecessary()
+        await cluster.refreshMetadataIfNecessary()
 
-            // If non-transactional we can request the PID from any broker
-            const broker = await (transactional
-              ? findTransactionCoordinator()
-              : cluster.findControllerBroker())
+        // If non-transactional we can request the PID from any broker
+        const broker = await (transactional
+          ? findTransactionCoordinator()
+          : cluster.findControllerBroker())
 
-            const result = await broker.initProducerId({
-              transactionalId: transactional ? transactionalId : undefined,
-              transactionTimeout,
-            })
-
-            stateMachine.transitionTo(STATES.READY)
-            producerId = result.producerId
-            producerEpoch = result.producerEpoch
-            producerSequence = {}
-
-            logger.debug('Initialized producer id & epoch', { producerId, producerEpoch })
-          } catch (e) {
-            if (INIT_PRODUCER_RETRIABLE_PROTOCOL_ERRORS.includes(e.type)) {
-              if (e.type === 'CONCURRENT_TRANSACTIONS') {
-                logger.debug('There is an ongoing transaction on this transactionId, retrying', {
-                  error: e.message,
-                  stack: e.stack,
-                  transactionalId,
-                  retryCount,
-                  retryTime,
-                })
-              }
-
-              throw e
-            }
-
-            bail(e)
-          }
+        const result = await broker.initProducerId({
+          transactionalId: transactional ? transactionalId : undefined,
+          transactionTimeout,
         })
+
+        stateMachine.transitionTo(STATES.READY)
+        producerId = result.producerId
+        producerEpoch = result.producerEpoch
+        producerSequence = {}
+
+        logger.debug('Initialized producer id & epoch', { producerId, producerEpoch })
       },
 
       /**
@@ -332,54 +309,12 @@ module.exports = ({
           groupId: consumerGroupId,
           coordinatorType: COORDINATOR_TYPES.GROUP,
         })
-
-        return retrier(async (bail, retryCount, retryTime) => {
-          try {
-            await groupCoordinator.txnOffsetCommit({
-              transactionalId,
-              producerId,
-              producerEpoch,
-              groupId: consumerGroupId,
-              topics,
-            })
-          } catch (e) {
-            if (COMMIT_RETRIABLE_PROTOCOL_ERRORS.includes(e.type)) {
-              logger.debug('Group coordinator is not ready yet, retrying', {
-                error: e.message,
-                stack: e.stack,
-                transactionalId,
-                retryCount,
-                retryTime,
-              })
-
-              throw e
-            }
-
-            if (
-              COMMIT_STALE_COORDINATOR_PROTOCOL_ERRORS.includes(e.type) ||
-              e.code === 'ECONNREFUSED'
-            ) {
-              logger.debug(
-                'Invalid group coordinator, finding new group coordinator and retrying',
-                {
-                  error: e.message,
-                  stack: e.stack,
-                  transactionalId,
-                  retryCount,
-                  retryTime,
-                }
-              )
-
-              groupCoordinator = await cluster.findGroupCoordinator({
-                groupId: consumerGroupId,
-                coordinatorType: COORDINATOR_TYPES.GROUP,
-              })
-
-              throw e
-            }
-
-            bail(e)
-          }
+        await groupCoordinator.txnOffsetCommit({
+          transactionalId,
+          producerId,
+          producerEpoch,
+          groupId: consumerGroupId,
+          topics,
         })
       },
     },

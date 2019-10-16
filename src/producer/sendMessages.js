@@ -13,8 +13,6 @@ const staleMetadata = e =>
   )
 
 module.exports = ({ logger, cluster, partitioner, eosManager }) => {
-  const retrier = createRetry({ retries: TOTAL_INDIVIDUAL_ATTEMPTS })
-
   return async ({ acks, timeout, compression, topicMessages }) => {
     const responsePerBroker = new Map()
 
@@ -119,23 +117,9 @@ module.exports = ({ logger, cluster, partitioner, eosManager }) => {
       })
     }
 
-    const makeRequests = async (bail, retryCount, retryTime) => {
-      try {
-        const requests = await createProducerRequests(responsePerBroker)
-        await Promise.all(requests)
-        const responses = Array.from(responsePerBroker.values())
-        return flatten(responses)
-      } catch (e) {
-        if (staleMetadata(e) || e.name === 'KafkaJSMetadataNotLoaded') {
-          await cluster.refreshMetadata()
-        }
-
-        throw e
-      }
-    }
-
-    return retrier(makeRequests).catch(e => {
-      throw e.originalError || e
-    })
+    const requests = await createProducerRequests(responsePerBroker)
+    await Promise.all(requests)
+    const responses = Array.from(responsePerBroker.values())
+    return flatten(responses)
   }
 }

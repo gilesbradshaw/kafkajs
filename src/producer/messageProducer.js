@@ -1,7 +1,7 @@
 const createSendMessages = require('./sendMessages')
 const { KafkaJSNonRetriableError } = require('../errors')
 
-module.exports = ({ logger, cluster, partitioner, eosManager, idempotent, retrier }) => {
+module.exports = ({ logger, cluster, partitioner, eosManager, idempotent }) => {
   const sendMessages = createSendMessages({
     logger,
     cluster,
@@ -55,41 +55,11 @@ module.exports = ({ logger, cluster, partitioner, eosManager, idempotent, retrie
         )
       }
     }
-
-    return retrier(async (bail, retryCount, retryTime) => {
-      try {
-        return await sendMessages({
-          acks,
-          timeout,
-          compression,
-          topicMessages,
-        })
-      } catch (error) {
-        if (!cluster.isConnected()) {
-          logger.debug(`Cluster has disconnected, reconnecting: ${error.message}`, {
-            retryCount,
-            retryTime,
-          })
-          await cluster.connect()
-          await cluster.refreshMetadata()
-          throw error
-        }
-
-        // This is necessary in case the metadata is stale and the number of partitions
-        // for this topic has increased in the meantime
-        if (
-          error.name === 'KafkaJSConnectionError' ||
-          (error.name === 'KafkaJSProtocolError' && error.retriable)
-        ) {
-          logger.error(`Failed to send messages: ${error.message}`, { retryCount, retryTime })
-          await cluster.refreshMetadata()
-          throw error
-        }
-
-        // Skip retries for errors not related to the Kafka protocol
-        logger.error(`${error.message}`, { retryCount, retryTime })
-        bail(error)
-      }
+    return sendMessages({
+      acks,
+      timeout,
+      compression,
+      topicMessages,
     })
   }
 

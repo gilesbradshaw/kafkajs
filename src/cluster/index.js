@@ -1,5 +1,4 @@
 const BrokerPool = require('./brokerPool')
-const createRetry = require('../retry')
 const connectionBuilder = require('./connectionBuilder')
 const flatten = require('../utils/flatten')
 const { EARLIEST_OFFSET, LATEST_OFFSET } = require('../constants')
@@ -59,7 +58,6 @@ module.exports = class Cluster {
   }) {
     this.rootLogger = rootLogger
     this.logger = rootLogger.namespace('Cluster')
-    this.retrier = createRetry({ ...retry })
     this.connectionBuilder = connectionBuilder({
       logger: rootLogger,
       instrumentationEmitter,
@@ -130,18 +128,8 @@ module.exports = class Cluster {
    * @returns {Promise<Metadata>}
    */
   async metadata({ topics = [] } = {}) {
-    return this.retrier(async (bail, retryCount, retryTime) => {
-      try {
-        await this.brokerPool.refreshMetadataIfNecessary(topics)
-        return this.brokerPool.withBroker(async ({ broker }) => broker.metadata(topics))
-      } catch (e) {
-        if (e.type === 'LEADER_NOT_AVAILABLE') {
-          throw e
-        }
-
-        bail(e)
-      }
-    })
+    await this.brokerPool.refreshMetadataIfNecessary(topics)
+    return this.brokerPool.withBroker(async ({ broker }) => broker.metadata(topics))
   }
 
   /**
@@ -274,37 +262,11 @@ module.exports = class Cluster {
    * @returns {Promise<Broker>}
    */
   async findGroupCoordinator({ groupId, coordinatorType = COORDINATOR_TYPES.GROUP }) {
-    return this.retrier(async (bail, retryCount, retryTime) => {
-      try {
-        const { coordinator } = await this.findGroupCoordinatorMetadata({
-          groupId,
-          coordinatorType,
-        })
-        return await this.findBroker({ nodeId: coordinator.nodeId })
-      } catch (e) {
-        // A new broker can join the cluster before we have the chance
-        // to refresh metadata
-        if (e.name === 'KafkaJSBrokerNotFound' || e.type === 'GROUP_COORDINATOR_NOT_AVAILABLE') {
-          this.logger.debug(`${e.message}, refreshing metadata and trying again...`, {
-            groupId,
-            retryCount,
-            retryTime,
-          })
-
-          await this.refreshMetadata()
-          throw e
-        }
-
-        if (e.code === 'ECONNREFUSED') {
-          // During maintenance the current coordinator can go down; findBroker will
-          // refresh metadata and re-throw the error. findGroupCoordinator has to re-throw
-          // the error to go through the retry cycle.
-          throw e
-        }
-
-        bail(e)
-      }
+    const { coordinator } = await this.findGroupCoordinatorMetadata({
+      groupId,
+      coordinatorType,
     })
+    return this.findBroker({ nodeId: coordinator.nodeId })
   }
 
   /**
@@ -315,33 +277,7 @@ module.exports = class Cluster {
    */
   async findGroupCoordinatorMetadata({ groupId, coordinatorType }) {
     const brokerMetadata = await this.brokerPool.withBroker(async ({ nodeId, broker }) => {
-      return await this.retrier(async (bail, retryCount, retryTime) => {
-        try {
-          const brokerMetadata = await broker.findGroupCoordinator({ groupId, coordinatorType })
-          this.logger.debug('Found group coordinator', {
-            broker: brokerMetadata.host,
-            nodeId: brokerMetadata.coordinator.nodeId,
-          })
-          return brokerMetadata
-        } catch (e) {
-          this.logger.debug('Tried to find group coordinator', {
-            nodeId,
-            error: e,
-          })
-
-          if (e.type === 'GROUP_COORDINATOR_NOT_AVAILABLE') {
-            this.logger.debug('Group coordinator not available, retrying...', {
-              nodeId,
-              retryCount,
-              retryTime,
-            })
-
-            throw e
-          }
-
-          bail(e)
-        }
-      })
+      return broker.findGroupCoordinator({ groupId, coordinatorType })
     })
 
     if (brokerMetadata) {
