@@ -105,7 +105,7 @@ module.exports = ({
       return true
     } catch (e) {
       if (e.type === 'NOT_CONTROLLER') {
-        logger.warn('Could not create topics', { error: e.message, retryCount, retryTime })
+        logger.warn('Could not create topics', { error: e.message })
       }
 
       if (e.type === 'TOPIC_ALREADY_EXISTS') {

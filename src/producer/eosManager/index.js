@@ -7,22 +7,6 @@ const STATES = require('./transactionStates')
 const NO_PRODUCER_ID = -1
 const SEQUENCE_START = 0
 const INT_32_MAX_VALUE = Math.pow(2, 32)
-const INIT_PRODUCER_RETRIABLE_PROTOCOL_ERRORS = [
-  'NOT_COORDINATOR_FOR_GROUP',
-  'GROUP_COORDINATOR_NOT_AVAILABLE',
-  'GROUP_LOAD_IN_PROGRESS',
-  /**
-   * The producer might have crashed and never committed the transaction; retry the
-   * request so Kafka can abort the current transaction
-   * @see https://github.com/apache/kafka/blob/201da0542726472d954080d54bc585b111aaf86f/clients/src/main/java/org/apache/kafka/clients/producer/internals/TransactionManager.java#L1001-L1002
-   */
-  'CONCURRENT_TRANSACTIONS',
-]
-const COMMIT_RETRIABLE_PROTOCOL_ERRORS = [
-  'UNKNOWN_TOPIC_OR_PARTITION',
-  'COORDINATOR_LOAD_IN_PROGRESS',
-]
-const COMMIT_STALE_COORDINATOR_PROTOCOL_ERRORS = ['COORDINATOR_NOT_AVAILABLE', 'NOT_COORDINATOR']
 
 /**
  * Manage behavior for an idempotent producer and transactions.
@@ -305,7 +289,7 @@ module.exports = ({
           groupId: consumerGroupId,
         })
 
-        let groupCoordinator = await cluster.findGroupCoordinator({
+        const groupCoordinator = await cluster.findGroupCoordinator({
           groupId: consumerGroupId,
           coordinatorType: COORDINATOR_TYPES.GROUP,
         })

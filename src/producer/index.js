@@ -1,4 +1,3 @@
-const createRetry = require('../retry')
 const { DefaultPartitioner } = require('./partitioners/')
 const InstrumentationEventEmitter = require('../instrumentation/emitter')
 const createEosManager = require('./eosManager')

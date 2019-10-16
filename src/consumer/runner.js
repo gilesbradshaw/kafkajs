@@ -6,9 +6,6 @@ const {
 
 const isTestMode = process.env.NODE_ENV === 'test'
 
-const isRebalancing = e =>
-  e.type === 'REBALANCE_IN_PROGRESS' || e.type === 'NOT_COORDINATOR_FOR_GROUP'
-
 const isKafkaJSError = e => e instanceof KafkaJSError
 
 module.exports = class Runner {
@@ -82,19 +79,14 @@ module.exports = class Runner {
       return
     }
 
-    try {
-      await this.consumerGroup.connect()
-      await this.join()
-      if (onStart) {
-        onStart()
-      }
-      this.running = true
-      while (true) {
-        await this.scheduleFetch()
-      }
-    } catch (e) {
-      throw e
-      this.onCrash(e)
+    await this.consumerGroup.connect()
+    await this.join()
+    if (onStart) {
+      onStart()
+    }
+    this.running = true
+    while (true) {
+      await this.scheduleFetch()
     }
   }
 
