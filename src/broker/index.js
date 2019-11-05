@@ -70,50 +70,47 @@ module.exports = class Broker {
    * @returns {Promise}
    */
   async connect() {
-    try {
-      await this.lock.acquire()
+    await this.lock.acquire()
 
-      if (this.isConnected()) {
-        return
-      }
-
-      this.authenticated = false
-      await this.connection.connect()
-
-      if (!this.versions) {
-        this.versions = await this.apiVersions()
-      }
-
-      this.lookupRequest = lookup(this.versions, this.allowExperimentalV011)
-
-      if (this.supportAuthenticationProtocol === null) {
-        try {
-          this.lookupRequest(apiKeys.SaslAuthenticate, requests.SaslAuthenticate)
-          this.supportAuthenticationProtocol = true
-        } catch (_) {
-          this.supportAuthenticationProtocol = false
-        }
-
-        this.logger.debug(`Verified support for SaslAuthenticate`, {
-          broker: this.brokerAddress,
-          supportAuthenticationProtocol: this.supportAuthenticationProtocol,
-        })
-      }
-
-      if (!this.authenticated && this.connection.sasl) {
-        const authenticator = new SASLAuthenticator(
-          this.connection,
-          this.rootLogger,
-          this.versions,
-          this.supportAuthenticationProtocol
-        )
-
-        await authenticator.authenticate()
-        this.authenticated = true
-      }
-    } finally {
-      await this.lock.release()
+    if (this.isConnected()) {
+      return
     }
+
+    this.authenticated = false
+    await this.connection.connect()
+
+    if (!this.versions) {
+      this.versions = await this.apiVersions()
+    }
+
+    this.lookupRequest = lookup(this.versions, this.allowExperimentalV011)
+
+    if (this.supportAuthenticationProtocol === null) {
+      try {
+        this.lookupRequest(apiKeys.SaslAuthenticate, requests.SaslAuthenticate)
+        this.supportAuthenticationProtocol = true
+      } catch (_) {
+        this.supportAuthenticationProtocol = false
+      }
+
+      this.logger.debug(`Verified support for SaslAuthenticate`, {
+        broker: this.brokerAddress,
+        supportAuthenticationProtocol: this.supportAuthenticationProtocol,
+      })
+    }
+
+    if (!this.authenticated && this.connection.sasl) {
+      const authenticator = new SASLAuthenticator(
+        this.connection,
+        this.rootLogger,
+        this.versions,
+        this.supportAuthenticationProtocol
+      )
+
+      await authenticator.authenticate()
+      this.authenticated = true
+    }
+    await this.lock.release()
   }
 
   /**
