@@ -70,6 +70,7 @@ module.exports = class Broker {
    * @returns {Promise}
    */
   async connect() {
+    await this.lock.acquire()
     if (this.isConnected()) {
       return
     }
@@ -108,6 +109,7 @@ module.exports = class Broker {
       await authenticator.authenticate()
       this.authenticated = true
     }
+    await this.lock.release()
   }
 
   /**
