@@ -1,8 +1,12 @@
 {
-  "name": "kafkajs",
+  "name": "kafkajs-fail-fast",
   "version": "1.10.0",
-  "description": "A modern Apache Kafka client for node.js",
-  "author": "Tulio Ornelas <ornelas.tulio@gmail.com>",
+  "description": "A modern Apache Kafka client for node.js adapted to fail fast",
+  "author": {
+    "name": "Giles Bradshaw",
+    "email": "giles.bradshaw@sigyl.com",
+    "url": "https://github.com/gilesbradshaw"
+  },
   "main": "index.js",
   "types": "types/index.d.ts",
   "license": "MIT",
@@ -16,10 +20,10 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/tulios/kafkajs.git"
+    "url": "https://github.com/gilesbradshaw/kafkajs-fail-fast.git"
   },
   "bugs": {
-    "url": "https://github.com/tulios/kafkajs/issues"
+    "url": "https://github.com/gilesbradshaw/kafkajs-fail-fast/issues"
   },
   "homepage": "https://kafka.js.org",
   "scripts": {
